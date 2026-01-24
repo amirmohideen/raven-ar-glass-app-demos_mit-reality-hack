@@ -4,20 +4,24 @@
 from enum import Enum
 from random import randint
 
-from PySide6.QtCore import Qt, QObject, QEvent
+from PySide6.QtGui import QCursor
 
-from raven_framework import RavenApp, RunApp, TextBox, Container, Button
+from raven_framework import RavenApp, RunApp, TextBox, Container, Button, VerticalContainer
 from raven_framework.components.cards import TextCardWithButton, TextCardWithTwoButtons
+from raven_framework.components.scroll_view import ScrollView
 from raven_framework.helpers.routine import Routine
 from raven_framework.helpers.animation_utils import fade_in
 
 
 # Game constants
-GRID_SIZE = 20  # 20x20 grid
+GRID_SIZE_HEIGHT = 20  # Grid height (rows)
+GRID_SIZE_BUTTONS = 22  # Grid width for button mode
+GRID_SIZE_CURSOR = 30  # Grid width for cursor mode (wider)
 GRID_CELL_SIZE = 20  # Each cell is 20x20 pixels
 GAME_SPEED = 300  # Milliseconds between moves
 CONTAINER_WIDTH = 450
 WALL_THICKNESS = 5
+BUTTON_THICKNESS = 60  # Thickness of direction buttons
 
 
 # Direction enum
@@ -33,9 +37,17 @@ class Direction(Enum):
 class GameState(Enum):
     """Game state enumeration."""
     MENU = "menu"
+    CONTROLS = "controls"
     TUTORIAL = "tutorial"
     PLAYING = "playing"
     GAME_OVER = "game_over"
+
+
+# Control mode enum
+class ControlMode(Enum):
+    """Control mode enumeration."""
+    CURSOR = "cursor"
+    BUTTONS = "buttons"
 
 
 class SnakeGame(RavenApp):
@@ -49,6 +61,7 @@ class SnakeGame(RavenApp):
         self.game_state = GameState.MENU
         self.score = 0
         self.high_score = 0
+        self.control_mode = ControlMode.CURSOR  # Default to cursor control
 
         # Snake and food
         self.snake = [(10, 10), (10, 11), (10, 12)]  # Head first
@@ -63,26 +76,30 @@ class SnakeGame(RavenApp):
         self.cursor_x = 0
         self.cursor_y = 0
 
-        # Install event filter for mouse tracking
-        self.app.setMouseTracking(True)
-        self.app.installEventFilter(self)
-
         # Initialize UI
         self.init_ui()
         fade_in(self.app)
 
-    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
-        """Track mouse movement and update snake direction."""
-        if event.type() == QEvent.Type.MouseMove and self.game_state == GameState.PLAYING:
-            # Get cursor position relative to the app
-            pos = event.position()
-            self.cursor_x = pos.x()
-            self.cursor_y = pos.y()
-            
-            # Update direction based on cursor position
-            self._update_direction_from_cursor()
+    def _update_cursor_position(self):
+        """Update cursor position from global cursor."""
+        if self.game_state != GameState.PLAYING:
+            return
         
-        return super().eventFilter(obj, event)
+        # Only update if cursor control mode is enabled
+        if self.control_mode != ControlMode.CURSOR:
+            return
+            
+        # Get global cursor position and map to widget coordinates
+        global_pos = QCursor.pos()
+        local_pos = self.mapFromGlobal(global_pos)
+        
+        # Account for the app container offset (centered in 720x720 window)
+        app_offset = 40
+        self.cursor_x = local_pos.x() - app_offset
+        self.cursor_y = local_pos.y() - app_offset
+        
+        # Update direction based on cursor position
+        self._update_direction_from_cursor()
 
     def _update_direction_from_cursor(self):
         """Update snake direction based on cursor position relative to snake head."""
@@ -117,13 +134,17 @@ class SnakeGame(RavenApp):
 
     def _generate_food(self):
         """Generate food at random position not occupied by snake."""
+        grid_width = self._get_grid_width()
         while True:
-            food = (randint(0, GRID_SIZE - 1), randint(0, GRID_SIZE - 1))
+            food = (randint(0, grid_width - 1), randint(0, GRID_SIZE_HEIGHT - 1))
             if food not in self.snake:
                 return food
 
     def _update_game(self):
         """Update game state (called by routine each frame)."""
+        # Update cursor position and direction before each move
+        self._update_cursor_position()
+        
         # Update direction if a new one is queued
         self.direction = self.next_direction
 
@@ -133,11 +154,12 @@ class SnakeGame(RavenApp):
         new_head = (head_x + dx, head_y + dy)
 
         # Check wall collision
+        grid_width = self._get_grid_width()
         if (
             new_head[0] < 0
-            or new_head[0] >= GRID_SIZE
+            or new_head[0] >= grid_width
             or new_head[1] < 0
-            or new_head[1] >= GRID_SIZE
+            or new_head[1] >= GRID_SIZE_HEIGHT
         ):
             self._end_game()
             return
@@ -161,14 +183,24 @@ class SnakeGame(RavenApp):
         # Redraw game
         self._draw_game()
 
+    def _get_grid_width(self):
+        """Get grid width based on control mode."""
+        if self.control_mode == ControlMode.CURSOR:
+            return GRID_SIZE_CURSOR
+        return GRID_SIZE_BUTTONS
+
     def _draw_game(self):
         """Draw the game board."""
         # Clear and rebuild UI
         self.app.clear()
 
+        # Get grid dimensions based on control mode
+        grid_width = self._get_grid_width()
+        grid_height = GRID_SIZE_HEIGHT
+
         # Create game board canvas
-        board_width = GRID_SIZE * GRID_CELL_SIZE
-        board_height = GRID_SIZE * GRID_CELL_SIZE
+        board_width = grid_width * GRID_CELL_SIZE
+        board_height = grid_height * GRID_CELL_SIZE
 
         board = Container(
             width=board_width, height=board_height, background_color="#000000"
@@ -208,44 +240,60 @@ class SnakeGame(RavenApp):
             )
             board.add(snake_segment, x=sx * GRID_CELL_SIZE, y=sy * GRID_CELL_SIZE)
 
-        # Add board to app
-        self.app.add(top_wall, x=0, y=0)
-        self.app.add(left_wall, x=0, y=0)
-        self.app.add(board, x=WALL_THICKNESS, y=WALL_THICKNESS)
-        self.app.add(bottom_wall, x=0, y=board_height + WALL_THICKNESS)
-        self.app.add(right_wall, x=board_width + WALL_THICKNESS, y=0)
+        # Calculate offsets based on control mode
+        if self.control_mode == ControlMode.BUTTONS:
+            # In button mode, offset board to make room for surrounding buttons
+            board_offset_x = BUTTON_THICKNESS
+            board_offset_y = BUTTON_THICKNESS
+        else:
+            # In cursor mode, no offset needed
+            board_offset_x = 0
+            board_offset_y = 0
 
-        # Add score display
-        score_text = TextBox(
-            text=f"Score: {self.score}", text_color="#FFFFFF", font_size=24
-        )
-        self.app.add(score_text, x=WALL_THICKNESS + 10, y=WALL_THICKNESS + 10)
+        # Add walls and board to app
+        self.app.add(top_wall, x=board_offset_x, y=board_offset_y)
+        self.app.add(left_wall, x=board_offset_x, y=board_offset_y)
+        self.app.add(board, x=board_offset_x + WALL_THICKNESS, y=board_offset_y + WALL_THICKNESS)
+        self.app.add(bottom_wall, x=board_offset_x, y=board_offset_y + board_height + WALL_THICKNESS)
+        self.app.add(right_wall, x=board_offset_x + board_width + WALL_THICKNESS, y=board_offset_y)
 
-        # Add direction control buttons
-        up_button = Button(center_text="↑", width=60, height=50)
-        up_button.on_clicked(self.set_direction, Direction.UP)
+        # Add direction control buttons only in button mode
+        if self.control_mode == ControlMode.BUTTONS:
+            # Total board with walls dimensions
+            total_board_width = board_width + WALL_THICKNESS * 2
+            total_board_height = board_height + WALL_THICKNESS * 2
 
-        down_button = Button(center_text="↓", width=60, height=50)
-        down_button.on_clicked(self.set_direction, Direction.DOWN)
+            # Up button - above top wall, spans board width
+            up_button = Button(center_text="↑", width=total_board_width, height=BUTTON_THICKNESS)
+            up_button.on_clicked(self.set_direction, Direction.UP)
+            self.app.add(up_button, x=board_offset_x, y=0)
 
-        left_button = Button(center_text="←", width=60, height=50)
-        left_button.on_clicked(self.set_direction, Direction.LEFT)
+            # Down button - below bottom wall, spans board width
+            down_button = Button(center_text="↓", width=total_board_width, height=BUTTON_THICKNESS)
+            down_button.on_clicked(self.set_direction, Direction.DOWN)
+            self.app.add(down_button, x=board_offset_x, y=board_offset_y + total_board_height)
 
-        right_button = Button(center_text="→", width=60, height=50)
-        right_button.on_clicked(self.set_direction, Direction.RIGHT)
+            # Left button - left of left wall, spans board height
+            left_button = Button(center_text="←", width=BUTTON_THICKNESS, height=total_board_height)
+            left_button.on_clicked(self.set_direction, Direction.LEFT)
+            self.app.add(left_button, x=0, y=board_offset_y)
 
-        # Position direction buttons at right side
-        button_start_x = board_width + WALL_THICKNESS + 20
-        button_start_y = WALL_THICKNESS
+            # Right button - right of right wall, spans board height
+            right_button = Button(center_text="→", width=BUTTON_THICKNESS, height=total_board_height)
+            right_button.on_clicked(self.set_direction, Direction.RIGHT)
+            self.app.add(right_button, x=board_offset_x + total_board_width, y=board_offset_y)
 
-        self.app.add(up_button, x=button_start_x + 60, y=button_start_y)
-        self.app.add(
-            left_button, x=button_start_x, y=button_start_y + 60
-        )
-        self.app.add(
-            right_button, x=button_start_x + 120, y=button_start_y + 60
-        )
-        self.app.add(down_button, x=button_start_x + 60, y=button_start_y + 120)
+            # Add score display below the down button
+            score_text = TextBox(
+                text=f"Score: {self.score}", text_color="#FFFFFF", font_size=24, width=total_board_width, alignment="center"
+            )
+            self.app.add(score_text, x=board_offset_x, y=board_offset_y + total_board_height + BUTTON_THICKNESS + 10)
+        else:
+            # In cursor mode, score below the board
+            score_text = TextBox(
+                text=f"Score: {self.score}", text_color="#FFFFFF", font_size=24, width=board_width, alignment="center"
+            )
+            self.app.add(score_text, x=WALL_THICKNESS, y=board_height + WALL_THICKNESS * 2 + 10)
 
     def set_direction(self, direction):
         """Set the next direction for the snake."""
@@ -289,18 +337,76 @@ class SnakeGame(RavenApp):
         self.game_state = GameState.TUTORIAL
         self.init_ui()
 
+    def _show_controls(self):
+        """Show the controls selection screen."""
+        self.game_state = GameState.CONTROLS
+        self.init_ui()
+
+    def _set_cursor_mode(self):
+        """Set control mode to cursor."""
+        self.control_mode = ControlMode.CURSOR
+        self._return_to_menu()
+
+    def _set_buttons_mode(self):
+        """Set control mode to buttons."""
+        self.control_mode = ControlMode.BUTTONS
+        self._return_to_menu()
+
     def init_ui(self):
         """Initialize the UI based on game state."""
         self.app.clear()
 
         if self.game_state == GameState.MENU:
-            # Main menu
+            # Main menu with 3 buttons
+            mode_text = "Cursor" if self.control_mode == ControlMode.CURSOR else "Buttons"
+            
+            menu_container = Container(
+                width=CONTAINER_WIDTH,
+                background_color="#1a1a1a",
+                corner_radius=20,
+                inner_margin=30,
+            )
+            
+            vbox = VerticalContainer(width=CONTAINER_WIDTH - 60)
+            
+            title = TextBox(
+                text="Snake Snack",
+                font_type="title",
+                alignment="center",
+                width=CONTAINER_WIDTH - 60,
+            )
+            
+            subtitle = TextBox(
+                text=f"Control: {mode_text}",
+                font_type="body",
+                alignment="center",
+                width=CONTAINER_WIDTH - 60,
+            )
+            
+            play_button = Button(center_text="Play", width=CONTAINER_WIDTH - 60)
+            play_button.on_clicked(self._start_game)
+            
+            tutorial_button = Button(center_text="Tutorial", width=CONTAINER_WIDTH - 60)
+            tutorial_button.on_clicked(self._show_tutorial)
+            
+            controls_button = Button(center_text="Controls", width=CONTAINER_WIDTH - 60)
+            controls_button.on_clicked(self._show_controls)
+            
+            vbox.add(title, subtitle, play_button, tutorial_button, controls_button)
+            menu_container.add(vbox)
+            
+            self.app.add(
+                menu_container, x=self.app.width() - menu_container.width(), y=30
+            )
+
+        elif self.game_state == GameState.CONTROLS:
+            # Controls selection screen
             card = TextCardWithTwoButtons(
-                text="Snake Attack\n\nEat food and grow!",
-                button_text_1="Play",
-                button_text_2="Tutorial",
-                on_button_1_click=self._start_game,
-                on_button_2_click=self._show_tutorial,
+                text=f"Select Control Mode:\n\nCurrent: {'Cursor' if self.control_mode == ControlMode.CURSOR else 'Buttons'}",
+                button_text_1="Cursor",
+                button_text_2="Buttons",
+                on_button_1_click=self._set_cursor_mode,
+                on_button_2_click=self._set_buttons_mode,
                 container_width=CONTAINER_WIDTH,
             )
             self.app.add(
@@ -308,24 +414,111 @@ class SnakeGame(RavenApp):
             )
 
         elif self.game_state == GameState.TUTORIAL:
-            # Tutorial screen
-            tutorial_text = """How to Play:
-
-↑ ↓ ← → Controls
-
-Eat yellow food
-to grow!
-
-Avoid red walls
-and yourself!"""
-            card = TextCardWithButton(
-                text=tutorial_text,
-                button_text="Got it!",
-                on_button_click=self._return_to_menu,
-                container_width=CONTAINER_WIDTH,
+            # Tutorial screen with scrollable instructions
+            tutorial_width = 550  # Wider container for tutorial
+            text_width = 460  # Leave room for scrollbar
+            
+            tutorial_container = Container(
+                width=tutorial_width,
+                background_color="#1a1a1a",
+                corner_radius=20,
+                inner_margin=20,
             )
+            
+            # Create content for scroll view
+            content = VerticalContainer(width=text_width, inner_margin=10)
+            
+            # Title
+            title = TextBox(
+                text="How to Play",
+                font_type="title",
+                alignment="center",
+                width=text_width,
+            )
+            content.add(title)
+            
+            # Objective section
+            objective_title = TextBox(
+                text="Objective",
+                font_type="headline",
+                width=text_width,
+            )
+            objective_text = TextBox(
+                text="Guide the snake to eat yellow food pellets. Each pellet makes the snake grow longer and adds 10 points to your score.",
+                font_type="body",
+                width=text_width,
+                wrap_words=True,
+            )
+            content.add(objective_title, objective_text)
+            
+            # Controls section
+            controls_title = TextBox(
+                text="Controls",
+                font_type="headline",
+                width=text_width,
+            )
+            
+            cursor_text = TextBox(
+                text="Cursor Mode: Move your cursor/gaze in the direction you want the snake to go. The snake follows your gaze!",
+                font_type="body",
+                width=text_width,
+                wrap_words=True,
+            )
+            
+            buttons_text = TextBox(
+                text="Button Mode: Look at the direction buttons surrounding the play area to change direction.",
+                font_type="body",
+                width=text_width,
+                wrap_words=True,
+            )
+            content.add(controls_title, cursor_text, buttons_text)
+            
+            # Danger section
+            danger_title = TextBox(
+                text="Game Over When",
+                font_type="headline",
+                width=text_width,
+            )
+            danger_text = TextBox(
+                text="• Snake hits the red walls\n• Snake collides with itself",
+                font_type="body",
+                width=text_width,
+                wrap_words=True,
+            )
+            content.add(danger_title, danger_text)
+            
+            # Tips section
+            tips_title = TextBox(
+                text="Tips",
+                font_type="headline",
+                width=text_width,
+            )
+            tips_text = TextBox(
+                text="• Plan ahead - the snake can't reverse direction\n• Use the edges wisely\n• Watch your tail as you grow longer!",
+                font_type="body",
+                width=text_width,
+                wrap_words=True,
+            )
+            content.add(tips_title, tips_text)
+            
+            # Create scroll view (wider to accommodate scrollbar)
+            scroll_view = ScrollView(
+                content_widget=content,
+                width=tutorial_width - 40,
+                height=450,
+            )
+            
+            # Back button
+            back_button = Button(center_text="Got it!", width=text_width)
+            back_button.on_clicked(self._return_to_menu)
+            
+            # Add scroll view and button to container
+            inner_vbox = VerticalContainer(width=tutorial_width - 40)
+            inner_vbox.add(scroll_view, back_button)
+            tutorial_container.add(inner_vbox)
+            
             self.app.add(
-                card, x=self.app.width() - card.width(), y=20
+                tutorial_container, x=self.app.width() - tutorial_container.width(), y=10
             )
 
         elif self.game_state == GameState.PLAYING:
