@@ -5,6 +5,7 @@ from enum import Enum
 from random import randint
 
 from PySide6.QtGui import QCursor
+from PySide6.QtCore import QEvent
 
 from raven_framework import RavenApp, RunApp, TextBox, Container, Button, VerticalContainer
 from raven_framework.components.cards import TextCardWithButton, TextCardWithTwoButtons
@@ -40,6 +41,7 @@ class GameState(Enum):
     CONTROLS = "controls"
     TUTORIAL = "tutorial"
     PLAYING = "playing"
+    PAUSED = "paused"
     GAME_OVER = "game_over"
 
 
@@ -76,9 +78,24 @@ class SnakeGame(RavenApp):
         self.cursor_x = 0
         self.cursor_y = 0
 
+        # Double-click detection for pause
+        self.last_click_time = 0
+        self.double_click_threshold = 400  # milliseconds
+
+        # Install event filter for double-click detection
+        self.installEventFilter(self)
+
         # Initialize UI
         self.init_ui()
         fade_in(self.app)
+
+    def eventFilter(self, obj, event):
+        """Handle double-click events to pause the game."""
+        if event.type() == QEvent.Type.MouseButtonDblClick:
+            if self.game_state == GameState.PLAYING:
+                self._pause_game()
+                return True
+        return super().eventFilter(obj, event)
 
     def _update_cursor_position(self):
         """Update cursor position from global cursor."""
@@ -217,11 +234,14 @@ class SnakeGame(RavenApp):
         right_wall = Container(width=WALL_THICKNESS, height=board_height + WALL_THICKNESS * 2, background_color="#FF0000")
 
         # Draw food
+        # Draw food (apple)
         fx, fy = self.food
-        food_widget = Container(
+        food_widget = TextBox(
+            text="🍎",
+            font_size=GRID_CELL_SIZE - 2,
             width=GRID_CELL_SIZE,
             height=GRID_CELL_SIZE,
-            background_color="#FFFF00",
+            alignment="center",
         )
         board.add(food_widget, x=fx * GRID_CELL_SIZE, y=fy * GRID_CELL_SIZE)
 
@@ -308,6 +328,21 @@ class SnakeGame(RavenApp):
         if direction != opposite_directions[self.direction]:
             self.next_direction = direction
 
+    def _pause_game(self):
+        """Pause the game."""
+        if self.game_state == GameState.PLAYING:
+            self.game_state = GameState.PAUSED
+            if self.game_routine:
+                self.game_routine.stop()
+                self.game_routine = None
+            self.init_ui()
+
+    def _resume_game(self):
+        """Resume the game from pause."""
+        self.game_state = GameState.PLAYING
+        self.game_routine = Routine(interval_ms=GAME_SPEED, invoke=self._update_game)
+        self.init_ui()
+
     def _end_game(self):
         """End the game."""
         if self.score > self.high_score:
@@ -376,13 +411,6 @@ class SnakeGame(RavenApp):
                 width=CONTAINER_WIDTH - 60,
             )
             
-            subtitle = TextBox(
-                text=f"Control: {mode_text}",
-                font_type="body",
-                alignment="center",
-                width=CONTAINER_WIDTH - 60,
-            )
-            
             play_button = Button(center_text="Play", width=CONTAINER_WIDTH - 60)
             play_button.on_clicked(self._start_game)
             
@@ -392,7 +420,14 @@ class SnakeGame(RavenApp):
             controls_button = Button(center_text="Controls", width=CONTAINER_WIDTH - 60)
             controls_button.on_clicked(self._show_controls)
             
-            vbox.add(title, subtitle, play_button, tutorial_button, controls_button)
+            subtitle = TextBox(
+                text=f"Control: {mode_text}",
+                font_type="body",
+                alignment="center",
+                width=CONTAINER_WIDTH - 60,
+            )
+            
+            vbox.add(title, play_button, tutorial_button, controls_button, subtitle)
             menu_container.add(vbox)
             
             self.app.add(
@@ -444,7 +479,7 @@ class SnakeGame(RavenApp):
                 width=text_width,
             )
             objective_text = TextBox(
-                text="Guide the snake to eat yellow food pellets. Each pellet makes the snake grow longer and adds 10 points to your score.",
+                text="Guide the snake to eat the apples 🍎. Each apple makes the snake grow longer and adds 10 points to your score.",
                 font_type="body",
                 width=text_width,
                 wrap_words=True,
@@ -523,6 +558,66 @@ class SnakeGame(RavenApp):
 
         elif self.game_state == GameState.PLAYING:
             self._draw_game()
+
+        elif self.game_state == GameState.PAUSED:
+            # Draw the game in background (frozen)
+            self._draw_game()
+            
+            # Pause menu overlay
+            pause_container = Container(
+                width=CONTAINER_WIDTH,
+                background_color="#1a1a1a",
+                corner_radius=20,
+                inner_margin=30,
+            )
+            
+            vbox = VerticalContainer(width=CONTAINER_WIDTH - 60)
+            
+            pause_title = TextBox(
+                text="Paused",
+                font_type="title",
+                alignment="center",
+                width=CONTAINER_WIDTH - 60,
+            )
+            
+            score_text = TextBox(
+                text=f"Score: {self.score}",
+                font_type="headline",
+                alignment="center",
+                width=CONTAINER_WIDTH - 60,
+            )
+            
+            high_score_text = TextBox(
+                text=f"High Score: {self.high_score}",
+                font_type="body",
+                alignment="center",
+                width=CONTAINER_WIDTH - 60,
+            )
+            
+            resume_button = Button(center_text="Resume", width=CONTAINER_WIDTH - 60)
+            resume_button.on_clicked(self._resume_game)
+            
+            exit_button = Button(center_text="Exit to Menu", width=CONTAINER_WIDTH - 60)
+            exit_button.on_clicked(self._return_to_menu)
+            
+            vbox.add(pause_title, score_text, high_score_text, resume_button, exit_button)
+            pause_container.add(vbox)
+            
+            # Center pause menu in the play area
+            if self.control_mode == ControlMode.BUTTONS:
+                board_width = GRID_SIZE_BUTTONS * GRID_CELL_SIZE
+                board_height = GRID_SIZE_HEIGHT * GRID_CELL_SIZE
+                board_offset_x = BUTTON_THICKNESS
+                board_offset_y = BUTTON_THICKNESS
+                center_x = board_offset_x + (board_width - pause_container.width()) // 2
+                center_y = board_offset_y + (board_height - pause_container.height()) // 2
+            else:
+                board_width = GRID_SIZE_CURSOR * GRID_CELL_SIZE
+                board_height = GRID_SIZE_HEIGHT * GRID_CELL_SIZE
+                center_x = WALL_THICKNESS + (board_width - pause_container.width()) // 2
+                center_y = WALL_THICKNESS + (board_height - pause_container.height()) // 2
+            
+            self.app.add(pause_container, x=center_x, y=center_y)
 
         elif self.game_state == GameState.GAME_OVER:
             # Game over screen
