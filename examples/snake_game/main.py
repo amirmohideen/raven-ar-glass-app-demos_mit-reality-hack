@@ -21,7 +21,7 @@ GRID_SIZE_CURSOR = 30  # Grid width for cursor mode (wider)
 GRID_CELL_SIZE = 20  # Each cell is 20x20 pixels
 GAME_SPEED = 300  # Milliseconds between moves
 CONTAINER_WIDTH = 450
-WALL_THICKNESS = 5
+WALL_THICKNESS = 10
 BUTTON_THICKNESS = 60  # Thickness of direction buttons
 
 
@@ -234,16 +234,14 @@ class SnakeGame(RavenApp):
         right_wall = Container(width=WALL_THICKNESS, height=board_height + WALL_THICKNESS * 2, background_color="#FF0000")
 
         # Draw food
-        # Draw food (apple)
+        # Draw food (red square)
         fx, fy = self.food
-        food_widget = TextBox(
-            text="🍎",
-            font_size=GRID_CELL_SIZE - 2,
-            width=GRID_CELL_SIZE,
-            height=GRID_CELL_SIZE,
-            alignment="center",
+        food_widget = Container(
+            width=GRID_CELL_SIZE - 2,
+            height=GRID_CELL_SIZE - 2,
+            background_color="#FF0000",
         )
-        board.add(food_widget, x=fx * GRID_CELL_SIZE, y=fy * GRID_CELL_SIZE)
+        board.add(food_widget, x=fx * GRID_CELL_SIZE + 1, y=fy * GRID_CELL_SIZE + 1)
 
         # Draw snake
         for i, (sx, sy) in enumerate(self.snake):
@@ -251,7 +249,7 @@ class SnakeGame(RavenApp):
             if i == 0:
                 color = "#00FF00"
             else:
-                color = "#00AA00"
+                color = "#00DD00"
 
             snake_segment = Container(
                 width=GRID_CELL_SIZE - 1,

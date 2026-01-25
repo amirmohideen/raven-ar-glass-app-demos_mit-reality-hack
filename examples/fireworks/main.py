@@ -1,5 +1,5 @@
 # Fireworks App - Double click to launch fireworks!
-from random import randint, uniform, choice
+import math
 from dataclasses import dataclass
 from typing import List
 
@@ -55,7 +55,7 @@ class FireworksApp(RavenApp):
         
         # Animation routine
         self.animation_routine = Routine(
-            interval_ms=33,  # ~30 FPS
+            interval_ms=50,  # ~20 FPS for performance
             invoke=self._update_particles,
         )
         
@@ -129,15 +129,27 @@ class FireworksApp(RavenApp):
 
     def _explode_firework(self, x: float, y: float):
         """Create explosion particles at position."""
-        color = choice(FIREWORK_COLORS)
-        num_particles = randint(60, 100)
+        # Precomputed particle data: (angle_offset, speed, color, size, life)
+        # Designed to look like a natural firework burst
+        particle_data = [
+            (0.0, 5, "#FF0000", 8, 18),      # Red - fast outer
+            (0.4, 4, "#FF6600", 7, 16),      # Orange
+            (0.8, 6, "#FFFF00", 6, 20),      # Yellow - fastest
+            (1.2, 3, "#00FF00", 8, 14),      # Green - slower
+            (1.6, 5, "#00FFFF", 7, 17),      # Cyan
+            (2.0, 4, "#0066FF", 6, 15),      # Blue
+            (2.4, 6, "#FF00FF", 8, 19),      # Magenta
+            (2.8, 3, "#FF69B4", 7, 13),      # Pink - slow inner
+            (3.2, 5, "#FFD700", 6, 16),      # Gold
+            (3.6, 4, "#FFFFFF", 8, 18),      # White
+            (4.0, 6, "#FF0000", 7, 20),      # Red
+            (4.4, 3, "#FFFF00", 6, 14),      # Yellow - slow
+            (4.8, 5, "#00FF00", 8, 17),      # Green
+            (5.2, 4, "#FF6600", 7, 15),      # Orange
+            (5.6, 6, "#00FFFF", 6, 19),      # Cyan - fast
+        ]
         
-        for _ in range(num_particles):
-            # Random direction and speed
-            angle = uniform(0, 6.28)  # 0 to 2*PI
-            speed = uniform(2, 8)
-            
-            import math
+        for angle, speed, color, size, life in particle_data:
             vx = math.cos(angle) * speed
             vy = math.sin(angle) * speed
             
@@ -146,9 +158,9 @@ class FireworksApp(RavenApp):
                 y=y,
                 vx=vx,
                 vy=vy,
-                color=color if randint(0, 3) > 0 else choice(FIREWORK_COLORS),
-                size=randint(4, 8),
-                life=randint(20, 40),
+                color=color,
+                size=size,
+                life=life,
             )
             self.particles.append(particle)
 
@@ -189,11 +201,10 @@ class FireworksApp(RavenApp):
                 else:
                     new_particles.append(particle)
                     
-                    # Draw particle
-                    if 0 <= particle.x <= 640 and 0 <= particle.y <= 640:
-                        # Fade out based on remaining life
-                        opacity = min(1.0, particle.life / 20)
-                        size = int(particle.size * opacity) + 2
+                    # Draw particle (skip if off screen)
+                    px, py = int(particle.x), int(particle.y)
+                    if 0 <= px <= 640 and 0 <= py <= 640:
+                        size = max(3, particle.size * particle.life // 20)
                         
                         particle_widget = Container(
                             width=size,
@@ -201,11 +212,7 @@ class FireworksApp(RavenApp):
                             background_color=particle.color,
                             corner_radius=size // 2,
                         )
-                        self.app.add(
-                            particle_widget,
-                            x=int(particle.x - size // 2),
-                            y=int(particle.y - size // 2),
-                        )
+                        self.app.add(particle_widget, x=px - size // 2, y=py - size // 2)
         
         self.particles = new_particles
         
